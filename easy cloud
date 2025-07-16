@@ -1,0 +1,132 @@
+# EasyCloud Intelligent Hardware Resource Scheduling Technical Documentation
+
+## 1. Document Overview
+
+### 1.1 Purpose
+This document details the technical implementation of the hardware resource scheduling system in EasyCloud, aiming to build an **efficient, stable, and intelligent** resource management framework. It supports core business scenarios such as cloud server leasing, multi-tenant content production, and cloud-edge-terminal collaboration, achieving **≥30% improvement in hardware resource utilization** and **≥20% reduction in service latency**.
+
+### 1.2 Scope
+Covers scheduling for CPU, GPU, memory, network, and other hardware resources, with a focus on:
+- **GPU fine-grained management** (e.g., video memory pooling, multi-instance isolation)
+- **Cloud-edge-terminal collaborative scheduling**
+- **Multi-tenant resource isolation**
+
+## 2. Core Technical Architecture
+
+### 2.1 Overall Framework
+Adopts a **"Perception-Decision-Execution-Feedback"** closed-loop architecture with four core modules:
+- **Monitoring Layer**: Real-time collection of hardware and business metrics for full-chain observability.
+- **Decision Layer**: Generates scheduling strategies using static rules and reinforcement learning algorithms.
+- **Execution Layer**: Implements resource allocation and task migration via virtualization and hardware interfaces.
+- **Feedback Layer**: Evaluates scheduling outcomes to dynamically optimize decision models.
+
+## 3. Full-Chain Monitoring System
+
+### 3.1 Monitoring Metrics
+
+| Monitoring Dimension | Core Metrics | Threshold Alerts (Examples) |
+|----------------------|-------------|-----------------------------|
+| **GPU Resources**    | Utilization (SM/Video Memory/Encoder), Temperature, Power Consumption, MIG Instance Status, NVLink Bandwidth | Video Memory Utilization >90%, Temperature >85°C |
+| **CPU & Memory**     | Utilization, Load Balancing (Per-Core Usage), Context Switching Frequency, Memory Fragmentation Rate | CPU Utilization >80% for 5+ minutes |
+| **Network Resources**| Cloud-Edge-Terminal Latency (RTT), Throughput, Packet Loss, SD-WAN Quality | Packet Loss >5%, Latency >100ms |
+| **Business Metrics** | Task Priority (Real-Time/Offline), QoS (e.g., Rendering FPS ≥30, Inference Latency <150ms), Tenant Quotas | Rendering FPS <24, Tenant Overuse >10% |
+
+### 3.2 Toolchain Selection
+
+- **Basic Monitoring**: Prometheus + Grafana (real-time visualization, customizable dashboards).
+- **GPU-Specific Monitoring**: NVIDIA DCGM (Data Center GPU Manager) for video memory pooling and MIG instance tracking.
+- **Distributed Tracing**: Jaeger for cross-node (cloud-edge-terminal) latency bottleneck analysis.
+- **Log Analysis**: ELK Stack (Elasticsearch + Logstash + Kibana) for storing scheduling logs used in model optimization.
+
+## 4. Hierarchical Scheduling Strategies
+
+### 4.1 Static Scheduling: Rule-Based Allocation
+
+#### 4.1.1 Resource Quotas & Isolation
+
+- **Tenant-Level Isolation**: Uses Linux cgroups to restrict CPU/memory usage and NVIDIA MIG technology to split single GPUs (e.g., A100/H100) into independent instances (e.g., 2×10GB + 5×5GB).
+- **Business-Level Quotas**: Predefined resource templates (e.g., "Real-Time Rendering Template" binds 2×T4 GPUs + 64GB RAM; "Offline Training Template" binds 1×A100 + 256GB RAM).
+
+#### 4.1.2 Hardware Affinity Scheduling
+
+- Binds compute-intensive tasks (e.g., 3D rendering, AI training) to GPU cores and NVLink-connected multi-GPU nodes.
+- Binds I/O-intensive tasks (e.g., video streaming, log storage) to idle CPU cores to avoid context-switching overhead.
+
+### 4.2 Dynamic Scheduling: Reinforcement Learning-Based Decisions
+
+#### 4.2.1 Model Design (Refer to EasyCloud RLAllocator)
+
+- **State Input**: Real-time hardware load (GPU Utilization 80%), business metrics (rendering latency 150ms), network conditions (bandwidth 10 Mbps).
+- **Action Output**: Resource adjustments (task migration, video memory expansion, MIG reassignment).
+- **Reward Function**:
+
+  ```
+  Reward = 0.6×Resource Utilization Improvement + 0.3×Latency Reduction - 0.1×Migration Overhead
+  ```
+
+  (Penalty coefficients double if latency thresholds are exceeded.)
+
+#### 4.2.2 Load Prediction & Warm-Up
+
+- Uses LSTM time-series models to predict demand (e.g., daily 19:00 cloud gaming peak) and pre-allocates edge-node GPU resources (e.g., T4 with 30% video memory reserved via NVIDIA vGPU).
+- Reduces GPU power consumption (e.g., A100 from 400W to 250W) during off-peak hours, saving **≥20% energy**.
+
+### 4.3 Cloud-Edge-Terminal Collaborative Scheduling
+
+| Node Type         | Suitable Tasks      | Scheduling Strategy                                                                 |
+|-------------------|--------------------|------------------------------------------------------------------------------------|
+| Edge Nodes (T4)   | Low-Latency Tasks  | Prioritize VR rendering, real-time video analysis (e.g., facial recognition) with T4 hardware decoding. |
+| Cloud Nodes (A100)| High-Compute Tasks | Handles large-scale training, complex rendering via NVSwitch-enabled 4TB video memory pooling (8×A100). |
+| Collaboration Rules | Dynamic Task Migration | Migrates non-real-time tasks (e.g., model training) to the cloud when edge GPU utilization >90%. |
+
+## 5. Core Technical Implementation
+
+### 5.1 GPU Resource Fine-Grained Management
+
+#### 5.1.1 Video Memory Pooling & Sharing
+
+- Leverages NVIDIA NVLink/NVSwitch to pool multi-GPU video memory into a unified address space (e.g., 4TB pool from 8×A100 GPUs) for cross-card dynamic allocation.
+- Reduces fragmentation to **<5%** using NVIDIA Memory Manager algorithms.
+
+#### 5.1.2 MIG Technology Application
+
+- Splits single A100/H100 GPUs into 1–7 independent MIG instances (each with dedicated cores, video memory, and bandwidth).
+- Example: Allocates 2×10GB instances to Tenant A and 1×20GB to Tenant B for isolated resource sharing.
+
+### 5.2 Elastic Scaling Mechanism
+
+- **Horizontal Scaling**: Kubernetes HPA scales nodes when GPU utilization exceeds 80% for 5+ minutes (response time <30s).
+- **Vertical Scaling**: Supports GPU compute overcommitment (up to 120% short-term) with dynamic frequency scaling for stability (e.g., burst rendering tasks).
+
+## 6. Fault Tolerance & High Availability
+
+### 6.1 Automated Failover
+
+- **Health Checks**: Heartbeat detection every 10s; nodes are marked faulty after 3 consecutive timeouts.
+- **Task Migration**: Restores tasks from checkpoints (e.g., AI training progress) to backup nodes within **<1 minute**.
+- **Network Redundancy**: Switches to backup paths (public internet) if primary edge network packet loss exceeds 5%.
+
+### 6.2 Rate Limiting & Degradation
+
+- Rejects low-priority tasks (e.g., offline log analysis) during overload (>90% resource utilization).
+- Downgrades services (e.g., reduces rendering resolution to 1080p) in extreme scenarios (e.g., >50% GPU cluster failure).
+
+## 7. Implementation & Testing Guide
+
+### 7.1 Toolchain Checklist
+
+| Module                | Recommended Tools/Frameworks    | Key Functions                             |
+|-----------------------|---------------------------------|-------------------------------------------|
+| Scheduling Framework  | Kubernetes + Volcano            | Container orchestration, GPU affinity     |
+| Monitoring System     | Prometheus + Grafana + NVIDIA DCGM | Full-stack metrics collection & visualization |
+| Reinforcement Learning Engine | PyTorch + EasyCloud RL Module | Training/deploying scheduling decision models |
+| Log Analysis          | ELK Stack                      | Storing/logging optimization analysis     |
+
+### 7.2 Test Scenarios & Acceptance Criteria
+
+| Test Scenario                  | Acceptance Criteria                                  |
+|--------------------------------|-----------------------------------------------------|
+| Multi-Tenant Isolation         | 100% isolation between tenants; no cross-impact during failures. |
+| Cloud-Edge Collaboration Efficiency | Edge-to-cloud task migration latency <500ms.     |
+| Resource Utilization Improvement | ≥30% GPU utilization uplift vs. static scheduling. |
+| Fault Recovery Time            | <1 minute for node failures.                        |
